@@ -1,11 +1,25 @@
 const mineflayer = require('mineflayer');
+const { randomInt } = require('node:crypto');
 const readline = require('node:readline/promises');
 const { stdin: input, stdout: output } = require('node:process');
 
-const CONNECT_DELAY_MS = 10_000;
+const MAX_BOTS = 10;
+const CONNECT_DELAY_MS = 2_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
-const CHAT_INTERVAL_MS = 30_000;
+const DEFAULT_CHAT_INTERVAL_SECONDS = 30;
+const MAX_TIMER_MS = 2_147_483_647;
+const DEFAULT_CHAT_MESSAGES = [
+  'Ciao {target}, come va?',
+  'Bene, grazie! Sto esplorando vicino allo spawn.',
+  'Hai trovato qualcosa di interessante?',
+  'Sì, sto raccogliendo risorse per costruire una base.',
+];
+const AUTH_COMMAND_DELAY_MS = 1500;
+const AUTH_CONFIRM_TIMEOUT_MS = 5000;
+const LOGIN_AFTER_REGISTER_DELAY_MS = 2000;
+const BOT_PASSWORD = process.env.BOT_PASSWORD?.trim() || process.env.MINECRAFT_PASSWORD?.trim();
+const DEFAULT_AUTH_PASSWORD = BOT_PASSWORD || 'Password123';
 
 const rl = readline.createInterface({ input, output });
 const bots = [];
@@ -74,52 +88,14 @@ function startChatLoop() {
 }
 
 const MAX_USERNAME_LENGTH = 16;
-
-// Nomi validi per Minecraft: solo lettere, cifre e underscore, massimo 16 caratteri.
 const ITALIAN_PLAYER_NAMES = [
-  'Marco_Build',
-  'Giulia_Miner',
-  'LucaPixel',
-  'Sofia_Craft',
-  'Andrea_Fox',
-  'Chiara_Moss',
-  'Davide_Pro',
-  'Elena_Diamond',
-  'Matteo_Raven',
-  'Francesca_Ender',
-  'Luca_Pixel',
-  'Alessia_Stone',
-  'Simone_Creeper',
-  'Martina_Lava',
-  'Giorgio_Redstone',
-  'Federica_Wolf',
-  'Lorenzo_Gamer',
-  'Valentina_Sky',
-  'Stefano_Ghost',
-  'Ilaria_Star',
-  'Gabriele_Zero',
-  'Beatrice_Fire',
-  'Riccardo_Axe',
-  'Silvia_Frost',
-  'Filippo_Nether',
-  'Alice_Pickaxe',
-  'Daniele_Storm',
-  'Giorgia_Wings',
-  'Nicolo_Archer',
-  'Elisa_Lapis',
-  'Tommaso_Zombie',
-  'Camilla_Pearl',
-  'Emanuele_Hawk',
-  'Martina_Cube',
-  'Federico_Gold',
-  'Sara_Emerald',
-  'Pietro_Shadow',
-  'Laura_Forest',
-  'Michele_Block',
-  'Paola_Moon',
-  'Fabio_Ninja',
-  'Roberta_Bee',
-  'Antonio_Smith',
+  'Marco_Build', 'Giulia_Miner', 'LucaPixel', 'Sofia_Craft', 'Andrea_Fox', 'Chiara_Moss', 'Davide_Pro',
+  'Elena_Diamond', 'Matteo_Raven', 'Francesca_Ender', 'Luca_Pixel', 'Alessia_Stone', 'Simone_Creeper',
+  'Martina_Lava', 'Giorgio_Redstone', 'Federica_Wolf', 'Lorenzo_Gamer', 'Valentina_Sky', 'Stefano_Ghost',
+  'Ilaria_Star', 'Gabriele_Zero', 'Beatrice_Fire', 'Riccardo_Axe', 'Silvia_Frost', 'Filippo_Nether',
+  'Alice_Pickaxe', 'Daniele_Storm', 'Giorgia_Wings', 'Nicolo_Archer', 'Elisa_Lapis', 'Tommaso_Zombie',
+  'Camilla_Pearl', 'Emanuele_Hawk', 'Martina_Cube', 'Federico_Gold', 'Sara_Emerald', 'Pietro_Shadow',
+  'Laura_Forest', 'Michele_Block', 'Paola_Moon', 'Fabio_Ninja', 'Roberta_Bee', 'Antonio_Smith',
 ];
 
 function withSuffix(baseName, suffix) {
@@ -190,12 +166,11 @@ function getEnvironmentConfig() {
   const count = Number(countValue);
 
   if (!host) throw new Error('Imposta la variabile MINECRAFT_HOST con l’host del server.');
-  if (!BOT_PASSWORD) throw new Error('Imposta BOT_PASSWORD con la password dei bot.');
   if (!/^\d+$/.test(portValue) || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('MINECRAFT_PORT deve essere un intero tra 1 e 65535.');
   }
-  if (!/^\d+$/.test(countValue) || !Number.isInteger(count) || count < 1) {
-    throw new Error('BOT_COUNT deve essere un intero maggiore o uguale a 1.');
+  if (!/^\d+$/.test(countValue) || !Number.isInteger(count) || count < 1 || count > MAX_BOTS) {
+    throw new Error(`BOT_COUNT deve essere un intero tra 1 e ${MAX_BOTS}.`);
   }
   if (process.env.ALLOW_SERVER_CONNECTIONS?.toLowerCase() !== 'true') {
     throw new Error('Per confermare l’autorizzazione imposta ALLOW_SERVER_CONNECTIONS=true.');
@@ -218,29 +193,63 @@ function startBot(username, host, port, version) {
 
   let antiAfkInterval;
   let jumpTimeout;
+  let authDelayTimeout;
+  let authConfirmTimeout;
+  let commandsReady = false;
+  let registerAttempted = false;
+  let loginAfterRegisterSent = false;
+  let loginAfterRegisterTimeout;
+  const authState = { handled: false };
+  const { registerPassword, loginPassword } = resolveAuthPasswords();
+  bot.loggedIn = false;
 
-  bot.once('spawn', () => {
-    console.log(`[${username}] Connesso a ${host}:${port}.`);
-    if (BOT_PASSWORD) {
-      authDelayTimeout = setTimeout(() => {
-        commandsReady = true;
-        sendCommand(`/login ${BOT_PASSWORD}`, 'Invio /login.');
-        authConfirmTimeout = setTimeout(() => {
-          if (bot.loggedIn) return;
-          console.warn(`[${username}] Nessuna conferma di autenticazione dopo ${AUTH_CONFIRM_TIMEOUT_MS / 1000} secondi: si procede comunque.`);
-          markLoggedIn();
-        }, AUTH_CONFIRM_TIMEOUT_MS);
-      }, AUTH_COMMAND_DELAY_MS);
-    } else {
-      console.warn(`[${username}] BOT_PASSWORD non impostata: autenticazione saltata.`);
-      markLoggedIn();
+  const markLoggedIn = () => {
+    if (bot.loggedIn) return;
+    bot.loggedIn = true;
+    clearTimeout(authConfirmTimeout);
+    spawnedBots.set(username, bot);
+    startChatLoop();
+  };
+
+  const sendCommand = (command, logMessage) => {
+    try {
+      bot.chat(command);
+      if (logMessage) console.log(`[${username}] ${logMessage}`);
+    } catch (error) {
+      console.error(`[${username}] Errore di autenticazione: invio comando fallito (${error.message}).`);
     }
-    antiAfkInterval = setInterval(() => {
-      if (bot.entity) {
-        bot.setControlState('jump', true);
-        jumpTimeout = setTimeout(() => bot.setControlState('jump', false), ANTI_AFK_JUMP_MS);
+  };
+
+  bot.on('messagestr', (message) => {
+    const text = String(message).toLowerCase();
+
+    if (text.includes('successo') || text.includes('logged in') || text.includes('accesso effettuato')) {
+      console.log(`[${username}] Autenticazione riuscita.`);
+      markLoggedIn();
+      return;
+    }
+
+    if (
+      text.includes('password errata') ||
+      text.includes('wrong password') ||
+      text.includes('incorrect password') ||
+      text.includes('password non corretta')
+    ) {
+      console.error(`[${username}] Errore di autenticazione: password rifiutata dal server.`);
+      return;
+    }
+
+    const alreadyRegistered = text.includes('già registrat') || text.includes('gia registrat') || text.includes('already registered');
+    if (!registerAttempted && !alreadyRegistered && (text.includes('/register') || text.includes('registrat') || text.includes('register'))) {
+      registerAttempted = true;
+      sendCommand(`/register ${registerPassword} ${registerPassword}`, 'Account non registrato: invio /register.');
+      if (!loginAfterRegisterSent) {
+        loginAfterRegisterSent = true;
+        loginAfterRegisterTimeout = setTimeout(() => {
+          sendCommand(`/login ${loginPassword}`, 'Invio /login dopo la registrazione.');
+        }, LOGIN_AFTER_REGISTER_DELAY_MS);
       }
-    }, ANTI_AFK_INTERVAL_MS);
+    }
   });
 
   bot.on('chat', (sender, message) => {
@@ -261,6 +270,30 @@ function startBot(username, host, port, version) {
     }
 
     authState.handled = true;
+  });
+
+  bot.once('spawn', () => {
+    console.log(`[${username}] Connesso a ${host}:${port}.`);
+    if (BOT_PASSWORD || registerPassword || loginPassword) {
+      authDelayTimeout = setTimeout(() => {
+        commandsReady = true;
+        sendCommand(`/login ${loginPassword}`, 'Invio /login.');
+        authConfirmTimeout = setTimeout(() => {
+          if (bot.loggedIn) return;
+          console.warn(`[${username}] Nessuna conferma di autenticazione dopo ${AUTH_CONFIRM_TIMEOUT_MS / 1000} secondi: si procede comunque.`);
+          markLoggedIn();
+        }, AUTH_CONFIRM_TIMEOUT_MS);
+      }, AUTH_COMMAND_DELAY_MS);
+    } else {
+      console.warn(`[${username}] Nessuna password configurata: autenticazione saltata.`);
+      markLoggedIn();
+    }
+    antiAfkInterval = setInterval(() => {
+      if (bot.entity) {
+        bot.setControlState('jump', true);
+        jumpTimeout = setTimeout(() => bot.setControlState('jump', false), ANTI_AFK_JUMP_MS);
+      }
+    }, ANTI_AFK_INTERVAL_MS);
   });
 
   bot.on('kicked', (reason) => {
@@ -289,6 +322,7 @@ function startBot(username, host, port, version) {
 
 async function main() {
   console.log('Usa questo programma solo su server tuoi o per cui hai autorizzazione.');
+
   let config;
   if (process.env.MINECRAFT_HOST || !input.isTTY) {
     config = getEnvironmentConfig();
@@ -319,6 +353,7 @@ async function main() {
   const usernames = generateBotNames(config.count);
   console.log(`Avvio di ${config.count} bot verso ${config.host}:${config.port}, uno ogni ${CONNECT_DELAY_MS / 1000} secondi.`);
   if (config.version) console.log(`Versione Minecraft: ${config.version}`);
+
   for (let index = 1; index <= config.count; index += 1) {
     startBot(usernames[index - 1], config.host, config.port, config.version);
     if (index < config.count) await sleep(CONNECT_DELAY_MS);
