@@ -4,7 +4,7 @@ const readline = require('node:readline/promises');
 const { stdin: input, stdout: output } = require('node:process');
 
 const MAX_BOTS = 10;
-const CONNECT_DELAY_MS = 2000;
+const CONNECT_DELAY_MS = 10_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
 const CHAT_INTERVAL_MS = 30_000;
@@ -196,7 +196,7 @@ async function main() {
   }
 
   const usernames = generatePlayerNames(config.count);
-  console.log(`Avvio di ${config.count} bot verso ${config.host}:${config.port}, uno ogni 2 secondi.`);
+  console.log(`Avvio di ${config.count} bot verso ${config.host}:${config.port}, uno ogni ${CONNECT_DELAY_MS / 1000} secondi.`);
   if (config.version) console.log(`Versione Minecraft: ${config.version}`);
   for (let index = 1; index <= config.count; index += 1) {
     startBot(usernames[index - 1], config.host, config.port, config.version);
