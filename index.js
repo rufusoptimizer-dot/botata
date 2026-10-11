@@ -97,10 +97,34 @@ async function askBotCount() {
   }
 }
 
-function startBot(username, host, port) {
+function getEnvironmentConfig() {
+  const host = process.env.MINECRAFT_HOST?.trim();
+  const portValue = process.env.MINECRAFT_PORT || '25565';
+  const countValue = process.env.BOT_COUNT || '2';
+  const versionValue = process.env.MINECRAFT_VERSION?.trim();
+  const port = Number(portValue);
+  const count = Number(countValue);
+
+  if (!host) throw new Error('Imposta la variabile MINECRAFT_HOST con l’host del server.');
+  if (!/^\d+$/.test(portValue) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('MINECRAFT_PORT deve essere un intero tra 1 e 65535.');
+  }
+  if (!/^\d+$/.test(countValue) || !Number.isInteger(count) || count < 1 || count > MAX_BOTS) {
+    throw new Error(`BOT_COUNT deve essere un intero tra 1 e ${MAX_BOTS}.`);
+  }
+  if (process.env.ALLOW_SERVER_CONNECTIONS?.toLowerCase() !== 'true') {
+    throw new Error('Per confermare l’autorizzazione imposta ALLOW_SERVER_CONNECTIONS=true.');
+  }
+
+  return { host, port, count, version: versionValue || undefined };
+}
+
+function startBot(username, host, port, version) {
   let bot;
   try {
-    bot = mineflayer.createBot({ username, host, port });
+    const options = { username, host, port };
+    if (version && version.toLowerCase() !== 'auto') options.version = version;
+    bot = mineflayer.createBot(options);
     bots.push(bot);
   } catch (error) {
     console.error(`[${username}] Errore durante l'avvio: ${error.message}`);
@@ -144,39 +168,57 @@ function startBot(username, host, port) {
 
 async function main() {
   console.log('Usa questo programma solo su server tuoi o per cui hai autorizzazione.');
-  const hostAnswer = (await rl.question('Indirizzo IP o host del server [127.0.0.1]: ')).trim();
-  const host = hostAnswer || '127.0.0.1';
+  let config;
+  if (process.env.MINECRAFT_HOST || !input.isTTY) {
+    config = getEnvironmentConfig();
+  } else {
+    const hostAnswer = (await rl.question('Indirizzo IP o host del server [127.0.0.1]: ')).trim();
+    const host = hostAnswer || '127.0.0.1';
 
-  const port = await askPort();
-  const count = await askBotCount();
-  if (count < 2) {
+    const port = await askPort();
+    const count = await askBotCount();
+    config = { host, port, count };
+    if (count < 2) {
+      console.log('Con un solo bot la conversazione tra bot non viene avviata.');
+    }
+
+    const confirmation = (await rl.question('Confermi di avere l’autorizzazione? (s/N): '))
+      .trim()
+      .toLowerCase();
+    if (confirmation !== 's' && confirmation !== 'si') {
+      console.log('Operazione annullata.');
+      return;
+    }
+  }
+
+  if (config.count < 2 && process.env.MINECRAFT_HOST) {
     console.log('Con un solo bot la conversazione tra bot non viene avviata.');
   }
 
-  const confirmation = (await rl.question('Confermi di avere l’autorizzazione? (s/N): '))
-    .trim()
-    .toLowerCase();
-  if (confirmation !== 's' && confirmation !== 'si') {
-    console.log('Operazione annullata.');
-    return;
+  const usernames = generatePlayerNames(config.count);
+  console.log(`Avvio di ${config.count} bot verso ${config.host}:${config.port}, uno ogni 2 secondi.`);
+  if (config.version) console.log(`Versione Minecraft: ${config.version}`);
+  for (let index = 1; index <= config.count; index += 1) {
+    startBot(usernames[index - 1], config.host, config.port, config.version);
+    if (index < config.count) await sleep(CONNECT_DELAY_MS);
   }
 
-  const usernames = generatePlayerNames(count);
-  console.log(`Avvio di ${count} bot verso ${host}:${port}, uno ogni 2 secondi.`);
-  for (let index = 1; index <= count; index += 1) {
-    startBot(usernames[index - 1], host, port);
-    if (index < count) await sleep(CONNECT_DELAY_MS);
-  }
-
-  console.log('Premi Ctrl+C per disconnettere i bot e terminare.');
+  if (input.isTTY) console.log('Premi Ctrl+C per disconnettere i bot e terminare.');
 }
 
-process.once('SIGINT', () => {
-  console.log('\nChiusura: disconnessione dei bot...');
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${signal}: disconnessione dei bot...`);
+  if (chatInterval) clearInterval(chatInterval);
   for (const bot of bots) bot.quit('Client terminato');
   const exitTimer = setTimeout(() => process.exit(0), 1000);
   exitTimer.unref();
-});
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 main()
   .catch((error) => {
