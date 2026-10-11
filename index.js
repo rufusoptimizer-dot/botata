@@ -3,7 +3,6 @@ const { randomInt } = require('node:crypto');
 const readline = require('node:readline/promises');
 const { stdin: input, stdout: output } = require('node:process');
 
-const MAX_BOTS = 10;
 const CONNECT_DELAY_MS = 10_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
@@ -56,6 +55,11 @@ function generatePlayerNames(count) {
   const adjectives = ['Misty', 'Pixel', 'Lucky', 'Swift', 'Cozy', 'Brave', 'Frosty', 'Sunny', 'Silent', 'Copper', 'Mellow', 'Dusty', 'Clever', 'Velvet'];
   const nouns = ['Fox', 'Miner', 'Birch', 'Badger', 'Otter', 'Raven', 'Clover', 'Pebble', 'Comet', 'Harbor', 'Moss', 'Panda', 'Maple', 'Waffle'];
   const names = new Set();
+  const maxUniqueNames = adjectives.length * nouns.length * 90;
+
+  if (count > maxUniqueNames) {
+    throw new Error(`Impossibile generare più di ${maxUniqueNames} nomi univoci.`);
+  }
 
   while (names.size < count) {
     const adjective = adjectives[randomInt(adjectives.length)];
@@ -89,11 +93,11 @@ async function askPort() {
 
 async function askBotCount() {
   while (true) {
-    const answer = (await rl.question(`Numero di bot [1-${MAX_BOTS}, predefinito 2]: `)).trim();
+    const answer = (await rl.question('Numero di bot [minimo 1, predefinito 2]: ')).trim();
     if (answer === '') return 2;
     const count = Number(answer);
-    if (Number.isInteger(count) && count >= 1 && count <= MAX_BOTS) return count;
-    console.log(`Inserisci un numero intero tra 1 e ${MAX_BOTS}.`);
+    if (Number.isInteger(count) && count >= 1) return count;
+    console.log('Inserisci un numero intero maggiore o uguale a 1.');
   }
 }
 
@@ -109,8 +113,8 @@ function getEnvironmentConfig() {
   if (!/^\d+$/.test(portValue) || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('MINECRAFT_PORT deve essere un intero tra 1 e 65535.');
   }
-  if (!/^\d+$/.test(countValue) || !Number.isInteger(count) || count < 1 || count > MAX_BOTS) {
-    throw new Error(`BOT_COUNT deve essere un intero tra 1 e ${MAX_BOTS}.`);
+  if (!/^\d+$/.test(countValue) || !Number.isInteger(count) || count < 1) {
+    throw new Error('BOT_COUNT deve essere un intero maggiore o uguale a 1.');
   }
   if (process.env.ALLOW_SERVER_CONNECTIONS?.toLowerCase() !== 'true') {
     throw new Error('Per confermare l’autorizzazione imposta ALLOW_SERVER_CONNECTIONS=true.');
