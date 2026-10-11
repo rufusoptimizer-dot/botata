@@ -5,18 +5,7 @@ const { stdin: input, stdout: output } = require('node:process');
 const CONNECT_DELAY_MS = 10_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
-const DEFAULT_CHAT_INTERVAL_SECONDS = 30;
-const MAX_TIMER_MS = 2_147_483_647;
-const DEFAULT_CHAT_MESSAGES = [
-  'Ciao {target}, come va?',
-  'Bene, grazie! Sto esplorando vicino allo spawn.',
-  'Hai trovato qualcosa di interessante?',
-  'Sì, sto raccogliendo risorse per costruire una base.',
-];
-const AUTH_COMMAND_DELAY_MS = 1500;
-const AUTH_CONFIRM_TIMEOUT_MS = 5000;
-const LOGIN_AFTER_REGISTER_DELAY_MS = 2000;
-const BOT_PASSWORD = process.env.BOT_PASSWORD?.trim();
+const CHAT_INTERVAL_MS = 30_000;
 
 const rl = readline.createInterface({ input, output });
 const bots = [];
@@ -156,6 +145,12 @@ function generateBotNames(count) {
   });
 }
 
+function resolveAuthPasswords() {
+  const registerPassword = process.env.REGISTER_PASSWORD || DEFAULT_AUTH_PASSWORD;
+  const loginPassword = process.env.LOGIN_PASSWORD || process.env.MINECRAFT_PASSWORD || registerPassword;
+  return { registerPassword, loginPassword };
+}
+
 function printableReason(reason) {
   if (typeof reason === 'string') return reason;
   try {
@@ -223,63 +218,6 @@ function startBot(username, host, port, version) {
 
   let antiAfkInterval;
   let jumpTimeout;
-  let authDelayTimeout;
-  let authConfirmTimeout;
-  let commandsReady = false;
-  let registerAttempted = false;
-  let loginAfterRegisterSent = false;
-  let loginAfterRegisterTimeout;
-  bot.loggedIn = false;
-
-  const markLoggedIn = () => {
-    if (bot.loggedIn) return;
-    bot.loggedIn = true;
-    clearTimeout(authConfirmTimeout);
-    spawnedBots.set(username, bot);
-    startChatLoop();
-  };
-
-  const sendCommand = (command, logMessage) => {
-    try {
-      bot.chat(command);
-      if (logMessage) console.log(`[${username}] ${logMessage}`);
-    } catch (error) {
-      console.error(`[${username}] Errore di autenticazione: invio comando fallito (${error.message}).`);
-    }
-  };
-
-  bot.on('messagestr', (message) => {
-    if (!BOT_PASSWORD || !commandsReady || bot.loggedIn) return;
-    const text = String(message).toLowerCase();
-
-    if (text.includes('successo') || text.includes('logged in') || text.includes('accesso effettuato')) {
-      console.log(`[${username}] Autenticazione riuscita.`);
-      markLoggedIn();
-      return;
-    }
-
-    if (
-      text.includes('password errata') ||
-      text.includes('wrong password') ||
-      text.includes('incorrect password') ||
-      text.includes('password non corretta')
-    ) {
-      console.error(`[${username}] Errore di autenticazione: password rifiutata dal server.`);
-      return;
-    }
-
-    const alreadyRegistered = text.includes('già registrat') || text.includes('gia registrat') || text.includes('already registered');
-    if (!registerAttempted && !alreadyRegistered && (text.includes('/register') || text.includes('registrat'))) {
-      registerAttempted = true;
-      sendCommand(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`, 'Account non registrato: invio /register.');
-      if (!loginAfterRegisterSent) {
-        loginAfterRegisterSent = true;
-        loginAfterRegisterTimeout = setTimeout(() => {
-          sendCommand(`/login ${BOT_PASSWORD}`, 'Invio /login dopo la registrazione.');
-        }, LOGIN_AFTER_REGISTER_DELAY_MS);
-      }
-    }
-  });
 
   bot.once('spawn', () => {
     console.log(`[${username}] Connesso a ${host}:${port}.`);
@@ -303,6 +241,26 @@ function startBot(username, host, port, version) {
         jumpTimeout = setTimeout(() => bot.setControlState('jump', false), ANTI_AFK_JUMP_MS);
       }
     }, ANTI_AFK_INTERVAL_MS);
+  });
+
+  bot.on('chat', (sender, message) => {
+    if (sender === bot.username || authState.handled) return;
+
+    const lowerMessage = message.toLowerCase();
+    const shouldRegister = /register|registrati|registra|create account/.test(lowerMessage);
+    const shouldLogin = /login|log in|accedi|signin/.test(lowerMessage);
+
+    if (!shouldRegister && !shouldLogin) return;
+
+    if (shouldRegister) {
+      bot.chat(`/register ${registerPassword} ${registerPassword}`);
+      console.log(`[${username}] registrazione automatica: /register ${registerPassword} ${registerPassword}`);
+    } else {
+      bot.chat(`/login ${loginPassword}`);
+      console.log(`[${username}] login automatico: /login ${loginPassword}`);
+    }
+
+    authState.handled = true;
   });
 
   bot.on('kicked', (reason) => {
