@@ -84,9 +84,76 @@ function startChatLoop() {
   }, CHAT_INTERVAL_MS);
 }
 
+const MAX_USERNAME_LENGTH = 16;
+
+// Nomi validi per Minecraft: solo lettere, cifre e underscore, massimo 16 caratteri.
+const ITALIAN_PLAYER_NAMES = [
+  'Marco_Build',
+  'Giulia_Miner',
+  'LucaPixel',
+  'Sofia_Craft',
+  'Andrea_Fox',
+  'Chiara_Moss',
+  'Davide_Pro',
+  'Elena_Diamond',
+  'Matteo_Raven',
+  'Francesca_Ender',
+  'Luca_Pixel',
+  'Alessia_Stone',
+  'Simone_Creeper',
+  'Martina_Lava',
+  'Giorgio_Redstone',
+  'Federica_Wolf',
+  'Lorenzo_Gamer',
+  'Valentina_Sky',
+  'Stefano_Ghost',
+  'Ilaria_Star',
+  'Gabriele_Zero',
+  'Beatrice_Fire',
+  'Riccardo_Axe',
+  'Silvia_Frost',
+  'Filippo_Nether',
+  'Alice_Pickaxe',
+  'Daniele_Storm',
+  'Giorgia_Wings',
+  'Nicolo_Archer',
+  'Elisa_Lapis',
+  'Tommaso_Zombie',
+  'Camilla_Pearl',
+  'Emanuele_Hawk',
+  'Martina_Cube',
+  'Federico_Gold',
+  'Sara_Emerald',
+  'Pietro_Shadow',
+  'Laura_Forest',
+  'Michele_Block',
+  'Paola_Moon',
+  'Fabio_Ninja',
+  'Roberta_Bee',
+  'Antonio_Smith',
+];
+
+function withSuffix(baseName, suffix) {
+  const text = String(suffix);
+  return `${baseName.slice(0, MAX_USERNAME_LENGTH - text.length)}${text}`;
+}
+
 function generateBotNames(count) {
-  const width = count > 99 ? 3 : 2;
-  return Array.from({ length: count }, (_, index) => `Bot${String(index + 1).padStart(width, '0')}`);
+  const used = new Set();
+  return Array.from({ length: count }, (_, index) => {
+    const baseName = ITALIAN_PLAYER_NAMES[index % ITALIAN_PLAYER_NAMES.length];
+    let name = baseName.slice(0, MAX_USERNAME_LENGTH);
+    let suffix = Math.floor(index / ITALIAN_PLAYER_NAMES.length) + 1;
+
+    if (index >= ITALIAN_PLAYER_NAMES.length) name = withSuffix(baseName, suffix);
+    while (used.has(name.toLowerCase())) {
+      suffix += 1;
+      name = withSuffix(baseName, suffix);
+    }
+
+    used.add(name.toLowerCase());
+    return name;
+  });
 }
 
 function printableReason(reason) {
