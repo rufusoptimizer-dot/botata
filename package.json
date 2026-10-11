@@ -1,0 +1,16 @@
+{
+  "name": "minecraft-mineflayer-bots",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Esempio CLI per collegare bot Mineflayer a un server autorizzato.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "mineflayer": "^4.28.0"
+  }
+}
