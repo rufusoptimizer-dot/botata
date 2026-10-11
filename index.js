@@ -8,6 +8,7 @@ const ANTI_AFK_JUMP_MS = 300;
 const CHAT_INTERVAL_MS = 30_000;
 const AUTH_COMMAND_DELAY_MS = 1500;
 const AUTH_CONFIRM_TIMEOUT_MS = 5000;
+const LOGIN_AFTER_REGISTER_DELAY_MS = 2000;
 const BOT_PASSWORD = process.env.BOT_PASSWORD?.trim();
 
 const rl = readline.createInterface({ input, output });
@@ -129,6 +130,8 @@ function startBot(username, host, port, version) {
   let authConfirmTimeout;
   let commandsReady = false;
   let registerAttempted = false;
+  let loginAfterRegisterSent = false;
+  let loginAfterRegisterTimeout;
   bot.loggedIn = false;
 
   const markLoggedIn = () => {
@@ -172,6 +175,12 @@ function startBot(username, host, port, version) {
     if (!registerAttempted && !alreadyRegistered && (text.includes('/register') || text.includes('registrat'))) {
       registerAttempted = true;
       sendCommand(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`, 'Account non registrato: invio /register.');
+      if (!loginAfterRegisterSent) {
+        loginAfterRegisterSent = true;
+        loginAfterRegisterTimeout = setTimeout(() => {
+          sendCommand(`/login ${BOT_PASSWORD}`, 'Invio /login dopo la registrazione.');
+        }, LOGIN_AFTER_REGISTER_DELAY_MS);
+      }
     }
   });
 
@@ -212,6 +221,7 @@ function startBot(username, host, port, version) {
     clearTimeout(jumpTimeout);
     clearTimeout(authDelayTimeout);
     clearTimeout(authConfirmTimeout);
+    clearTimeout(loginAfterRegisterTimeout);
     bot.loggedIn = false;
     spawnedBots.delete(username);
     if (spawnedBots.size < 2 && chatInterval) {
