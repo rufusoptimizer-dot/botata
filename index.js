@@ -1,5 +1,4 @@
 const mineflayer = require('mineflayer');
-const { randomInt } = require('node:crypto');
 const readline = require('node:readline/promises');
 const { stdin: input, stdout: output } = require('node:process');
 
@@ -7,6 +6,9 @@ const CONNECT_DELAY_MS = 10_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
 const CHAT_INTERVAL_MS = 30_000;
+const AUTH_COMMAND_DELAY_MS = 1500;
+const AUTH_CONFIRM_TIMEOUT_MS = 5000;
+const BOT_PASSWORD = process.env.BOT_PASSWORD?.trim();
 
 const rl = readline.createInterface({ input, output });
 const bots = [];
@@ -18,7 +20,7 @@ function sleep(milliseconds) {
 }
 
 function startChatLoop() {
-  if (chatInterval || spawnedBots.size < 2) return;
+  if (chatInterval || [...spawnedBots.values()].filter((bot) => bot.loggedIn).length < 2) return;
 
   const dialogue = [
     'Ciao {target}, come va?',
@@ -30,7 +32,7 @@ function startChatLoop() {
 
   console.log('Chat di prova avviata: un messaggio ogni 30 secondi.');
   chatInterval = setInterval(() => {
-    const participants = [...spawnedBots.entries()];
+    const participants = [...spawnedBots.entries()].filter(([, bot]) => bot.loggedIn);
     if (participants.length < 2) {
       clearInterval(chatInterval);
       chatInterval = undefined;
@@ -51,24 +53,9 @@ function startChatLoop() {
   }, CHAT_INTERVAL_MS);
 }
 
-function generatePlayerNames(count) {
-  const adjectives = ['Misty', 'Pixel', 'Lucky', 'Swift', 'Cozy', 'Brave', 'Frosty', 'Sunny', 'Silent', 'Copper', 'Mellow', 'Dusty', 'Clever', 'Velvet'];
-  const nouns = ['Fox', 'Miner', 'Birch', 'Badger', 'Otter', 'Raven', 'Clover', 'Pebble', 'Comet', 'Harbor', 'Moss', 'Panda', 'Maple', 'Waffle'];
-  const names = new Set();
-  const maxUniqueNames = adjectives.length * nouns.length * 90;
-
-  if (count > maxUniqueNames) {
-    throw new Error(`Impossibile generare più di ${maxUniqueNames} nomi univoci.`);
-  }
-
-  while (names.size < count) {
-    const adjective = adjectives[randomInt(adjectives.length)];
-    const noun = nouns[randomInt(nouns.length)];
-    const number = randomInt(10, 100);
-    names.add(`${adjective}${noun}${number}`);
-  }
-
-  return [...names];
+function generateBotNames(count) {
+  const width = count > 99 ? 3 : 2;
+  return Array.from({ length: count }, (_, index) => `Bot${String(index + 1).padStart(width, '0')}`);
 }
 
 function printableReason(reason) {
@@ -110,6 +97,7 @@ function getEnvironmentConfig() {
   const count = Number(countValue);
 
   if (!host) throw new Error('Imposta la variabile MINECRAFT_HOST con l’host del server.');
+  if (!BOT_PASSWORD) throw new Error('Imposta BOT_PASSWORD con la password dei bot.');
   if (!/^\d+$/.test(portValue) || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error('MINECRAFT_PORT deve essere un intero tra 1 e 65535.');
   }
@@ -137,11 +125,72 @@ function startBot(username, host, port, version) {
 
   let antiAfkInterval;
   let jumpTimeout;
+  let authDelayTimeout;
+  let authConfirmTimeout;
+  let commandsReady = false;
+  let registerAttempted = false;
+  bot.loggedIn = false;
+
+  const markLoggedIn = () => {
+    if (bot.loggedIn) return;
+    bot.loggedIn = true;
+    clearTimeout(authConfirmTimeout);
+    spawnedBots.set(username, bot);
+    startChatLoop();
+  };
+
+  const sendCommand = (command, logMessage) => {
+    try {
+      bot.chat(command);
+      if (logMessage) console.log(`[${username}] ${logMessage}`);
+    } catch (error) {
+      console.error(`[${username}] Errore di autenticazione: invio comando fallito (${error.message}).`);
+    }
+  };
+
+  bot.on('messagestr', (message) => {
+    if (!BOT_PASSWORD || !commandsReady || bot.loggedIn) return;
+    const text = String(message).toLowerCase();
+
+    if (text.includes('successo') || text.includes('logged in') || text.includes('accesso effettuato')) {
+      console.log(`[${username}] Autenticazione riuscita.`);
+      markLoggedIn();
+      return;
+    }
+
+    if (
+      text.includes('password errata') ||
+      text.includes('wrong password') ||
+      text.includes('incorrect password') ||
+      text.includes('password non corretta')
+    ) {
+      console.error(`[${username}] Errore di autenticazione: password rifiutata dal server.`);
+      return;
+    }
+
+    const alreadyRegistered = text.includes('già registrat') || text.includes('gia registrat') || text.includes('already registered');
+    if (!registerAttempted && !alreadyRegistered && (text.includes('/register') || text.includes('registrat'))) {
+      registerAttempted = true;
+      sendCommand(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`, 'Account non registrato: invio /register.');
+    }
+  });
 
   bot.once('spawn', () => {
     console.log(`[${username}] Connesso a ${host}:${port}.`);
-    spawnedBots.set(username, bot);
-    startChatLoop();
+    if (BOT_PASSWORD) {
+      authDelayTimeout = setTimeout(() => {
+        commandsReady = true;
+        sendCommand(`/login ${BOT_PASSWORD}`, 'Invio /login.');
+        authConfirmTimeout = setTimeout(() => {
+          if (bot.loggedIn) return;
+          console.warn(`[${username}] Nessuna conferma di autenticazione dopo ${AUTH_CONFIRM_TIMEOUT_MS / 1000} secondi: si procede comunque.`);
+          markLoggedIn();
+        }, AUTH_CONFIRM_TIMEOUT_MS);
+      }, AUTH_COMMAND_DELAY_MS);
+    } else {
+      console.warn(`[${username}] BOT_PASSWORD non impostata: autenticazione saltata.`);
+      markLoggedIn();
+    }
     antiAfkInterval = setInterval(() => {
       if (bot.entity) {
         bot.setControlState('jump', true);
@@ -161,6 +210,9 @@ function startBot(username, host, port, version) {
   bot.once('end', (reason) => {
     clearInterval(antiAfkInterval);
     clearTimeout(jumpTimeout);
+    clearTimeout(authDelayTimeout);
+    clearTimeout(authConfirmTimeout);
+    bot.loggedIn = false;
     spawnedBots.delete(username);
     if (spawnedBots.size < 2 && chatInterval) {
       clearInterval(chatInterval);
@@ -199,7 +251,7 @@ async function main() {
     console.log('Con un solo bot la conversazione tra bot non viene avviata.');
   }
 
-  const usernames = generatePlayerNames(config.count);
+  const usernames = generateBotNames(config.count);
   console.log(`Avvio di ${config.count} bot verso ${config.host}:${config.port}, uno ogni ${CONNECT_DELAY_MS / 1000} secondi.`);
   if (config.version) console.log(`Versione Minecraft: ${config.version}`);
   for (let index = 1; index <= config.count; index += 1) {
