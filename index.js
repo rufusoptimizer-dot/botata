@@ -5,7 +5,14 @@ const { stdin: input, stdout: output } = require('node:process');
 const CONNECT_DELAY_MS = 10_000;
 const ANTI_AFK_INTERVAL_MS = 60_000;
 const ANTI_AFK_JUMP_MS = 300;
-const CHAT_INTERVAL_MS = 30_000;
+const DEFAULT_CHAT_INTERVAL_SECONDS = 30;
+const MAX_TIMER_MS = 2_147_483_647;
+const DEFAULT_CHAT_MESSAGES = [
+  'Ciao {target}, come va?',
+  'Bene, grazie! Sto esplorando vicino allo spawn.',
+  'Hai trovato qualcosa di interessante?',
+  'Sì, sto raccogliendo risorse per costruire una base.',
+];
 const AUTH_COMMAND_DELAY_MS = 1500;
 const AUTH_CONFIRM_TIMEOUT_MS = 5000;
 const LOGIN_AFTER_REGISTER_DELAY_MS = 2000;
@@ -20,18 +27,41 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function getChatMessages() {
+  const raw = process.env.CHAT_MESSAGES;
+  if (raw === undefined) return DEFAULT_CHAT_MESSAGES;
+
+  const messages = raw
+    .split('|')
+    .map((message) => message.trim())
+    .filter((message) => message !== '');
+  return messages.length > 0 ? messages : DEFAULT_CHAT_MESSAGES;
+}
+
+function getChatIntervalSeconds() {
+  const raw = process.env.CHAT_INTERVAL_SECONDS?.trim();
+  if (!raw) return DEFAULT_CHAT_INTERVAL_SECONDS;
+
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds * 1000 > MAX_TIMER_MS) {
+    console.warn(
+      `CHAT_INTERVAL_SECONDS non valida ("${raw}"): uso il valore predefinito di ${DEFAULT_CHAT_INTERVAL_SECONDS} secondi.`,
+    );
+    return DEFAULT_CHAT_INTERVAL_SECONDS;
+  }
+  return seconds;
+}
+
+const CHAT_INTERVAL_SECONDS = getChatIntervalSeconds();
+const CHAT_INTERVAL_MS = CHAT_INTERVAL_SECONDS * 1000;
+
 function startChatLoop() {
   if (chatInterval || [...spawnedBots.values()].filter((bot) => bot.loggedIn).length < 2) return;
 
-  const dialogue = [
-    'Ciao {target}, come va?',
-    'Bene, grazie! Sto esplorando vicino allo spawn.',
-    'Hai trovato qualcosa di interessante?',
-    'Sì, sto raccogliendo risorse per costruire una base.',
-  ];
+  const dialogue = getChatMessages();
   let turn = 0;
 
-  console.log('Chat di prova avviata: un messaggio ogni 30 secondi.');
+  console.log(`Chat di prova avviata: un messaggio ogni ${CHAT_INTERVAL_SECONDS} secondi.`);
   chatInterval = setInterval(() => {
     const participants = [...spawnedBots.entries()].filter(([, bot]) => bot.loggedIn);
     if (participants.length < 2) {
